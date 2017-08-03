@@ -5,3 +5,4 @@ authors = ["Michael Lazear <lazear@scripps.edu>"]
 
 [dependencies]
 spreadsheet = {git = "https://github.com/lazear/spreadsheet.git" }
+rand = "0.3"
