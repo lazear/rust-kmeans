@@ -1,0 +1,14 @@
+[root]
+name = "rust-kmeans"
+version = "0.1.0"
+dependencies = [
+ "spreadsheet 0.1.0 (git+https://github.com/lazear/spreadsheet.git)",
+]
+
+[[package]]
+name = "spreadsheet"
+version = "0.1.0"
+source = "git+https://github.com/lazear/spreadsheet.git#0406d68360cae2a7fe96878969acc8a8c99dd66d"
+
+[metadata]
+"checksum spreadsheet 0.1.0 (git+https://github.com/lazear/spreadsheet.git)" = "<none>"
