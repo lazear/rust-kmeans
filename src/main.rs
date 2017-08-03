@@ -2,6 +2,7 @@ extern crate spreadsheet;
 use spreadsheet::{Cell, Spreadsheet};
 use std::collections::HashMap;
 use std::env::*;
+use std::thread::*;
 
 fn distance(x: &[f32], b: &[f32]) -> f32 {
     let mut sums: f32 = 0.0;
@@ -11,15 +12,29 @@ fn distance(x: &[f32], b: &[f32]) -> f32 {
     sums
 }
 
-fn kmeans(matrix: &Vec<Vec<f32>>, k_values: &[usize]) {
+struct Point<'a> {
+    data: &'a Vec<f32>,
+    cluster: usize,
+}
+
+struct Cluster<'a> {
+    members: Vec<&'a Point<'a>>,
+    center: &'a Vec<f32>,
+}
+
+
+fn kmeans(matrix: Vec<Vec<f32>>, k_values: &[usize]) {
 
     assert!(k_values.len() < matrix.len());
 
-    
+    let mut membership: Vec<usize> = Vec::new();
+    let mut cluster_scores: Vec<Vec<f32>> = Vec::new();
     let mut centroids: Vec<&Vec<f32>> = Vec::new();
+
 
     for k in k_values {
         centroids.push(matrix.get(*k).unwrap());
+        cluster_scores.push(Vec::new());
     }
 
     let mut iter = matrix.iter().enumerate();
@@ -30,14 +45,24 @@ fn kmeans(matrix: &Vec<Vec<f32>>, k_values: &[usize]) {
         let mut cn =  centroids.iter().enumerate();
         while let Some((k, c)) = cn.next() {
             let s = distance(&current[..], c);
-            println!("{}, {}", k, &s);
+            //println!("{}, {}", k, &s);
             scores.push(s);
         }            
 
         let min = scores.iter().cloned().fold(1./0., f32::min);
         let winning_k = scores.iter().position(|&x| x == min).unwrap();
-        println!("{} best cluster is {} with a score of {}", i, winning_k, min);
+        //println!("{} best cluster is {} with a score of {}", i, winning_k, min);
+
+        membership.push(winning_k);
+        if let Some(wcss) = cluster_scores.get_mut(i) {
+            wcss.push(min);
+        }
+    }   
+
+    for c in cluster_scores {
+        println!("{}", c.iter().cloned().sum::<f32>() / c.len() as f32);
     }
+    
 
 
 
@@ -86,12 +111,29 @@ fn main() {
             panic!("Too many string classes specified");
         }
 
+
         classes.push(class[0]);
         matrix.push(floats);
         
     }
-    
-    kmeans(&matrix, &[15, 55, 120]);
+
+    matrix.shrink_to_fit();
+    classes.shrink_to_fit();
+
+    let mut handles: Vec<JoinHandle<_>> = Vec::new();
+    let a = std::sync::Arc::new(matrix);
+    for i in 0..3 {
+        let q = a.clone();
+        handles.push(std::thread::spawn(move || {
+        
+            kmeans(q.to_vec(), &[15+i, 55+i*2, 120-i*10]);
+
+        }));
+    }
+
+    for thread in handles {
+        let _ = thread.join();
+    }
 
     //println!("{:?}", matrix.iter().zip(classes.iter()).collect::<Vec<(&Vec<f32>, &&str)>>());
 
