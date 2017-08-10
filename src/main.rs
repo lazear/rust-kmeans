@@ -1,14 +1,11 @@
 extern crate spreadsheet;
 extern crate rand;
 
-use rand::Rng;
 use rand::distributions::{Range, IndependentSample};
 use spreadsheet::{Cell, Spreadsheet};
 
 use std::sync::{Arc, Mutex};
 use std::thread::*;
-use std::io;
-use std::io::Write;
 
 fn distance(x: &[f32], b: &[f32]) -> f32 {
     let mut sums: f32 = 0.0;
@@ -20,29 +17,28 @@ fn distance(x: &[f32], b: &[f32]) -> f32 {
 
 #[derive(Debug)]
 struct Cluster {
+    // store index of all members
     members: Vec<usize>,
-    center: Vec<f32>,
+    // store index of center
+    center: usize,
 }
 
 /// Thread safe k-means clustering algorithm
-fn kmeans(mutex: Arc<Mutex<i32>>, matrix: Arc<Vec<Vec<f32>>>, kn: usize) -> Vec<Cluster> {
+fn kmeans(mutex: Arc<Mutex<i32>>, matrix: Arc<Vec<Vec<f32>>>, k: usize) -> Vec<Cluster> {
 
-    assert!(kn < matrix.len());
+    // Make sure that our K value does not exceed number of data points
+    assert!(k < matrix.len());
 
-    let mut clusters: Vec<Cluster> = Vec::new();
+    let mut clusters: Vec<Cluster> = Vec::with_capacity(k);
 
-    let mut membership: Vec<usize> = Vec::new();
-    let mut cluster_scores: Vec<Vec<f32>> = Vec::new();
-    let mut centroids: Vec<&Vec<f32>> = Vec::new();
-
-    let range = Range::new(0, matrix.len());
     let mut rng = rand::thread_rng();
+    let range = Range::new(0, matrix.len());  
 
-    for k in 0..kn {
-        let x = matrix.get(range.ind_sample(&mut rng)).unwrap();
-        centroids.push(x);
-        cluster_scores.push(Vec::new());
-        clusters.push(Cluster { members: Vec::new(), center: x.clone()});
+    // Start by picking initial unique seeds
+    for _ in 0..k {
+        // Pick a random data point as a centroid
+        let x = range.ind_sample(&mut rng);
+        clusters.push(Cluster { members: Vec::new(), center: x});
     }
 
     let mut iter = matrix.iter().enumerate();
@@ -50,32 +46,87 @@ fn kmeans(mutex: Arc<Mutex<i32>>, matrix: Arc<Vec<Vec<f32>>>, kn: usize) -> Vec<
     // iterate through each row in the matrix, and pick the best cluster membership
     while let Some((i, current)) = iter.next() {
         let mut scores: Vec<f32> = Vec::new();
-        let mut cn =  centroids.iter().enumerate();
-        while let Some((k, c)) = cn.next() {
-            let s = distance(&current[..], c);
-            //println!("{}, {}", k, &s);
-            scores.push(s);
-        }            
 
-        let min = scores.iter().cloned().fold(1./0., f32::min);
-        let winning_k = scores.iter().position(|&x| x == min).unwrap();
-        //println!("{} best cluster is {} with a score of {}", i, winning_k, min);
-
-        membership.push(winning_k);
-        if let Some(c) = clusters.get_mut(winning_k) {
-            c.members.push(i);
+        // iterate through the cluster list, and find the euclidean distance
+        // between the current data point and each cluster's center
+        for c in clusters.iter() {
+            scores.push(distance(&current[..], &matrix[c.center]));
         }
-        if let Some(wcss) = cluster_scores.get_mut(i) {
-            wcss.push(min);
+
+        // pick the cluster-center that we are closest to
+        let min = scores.iter().cloned().fold(1./0., f32::min);
+        let best_cluster = scores.iter().position(|&x| x == min).unwrap();
+
+        // update the cluster list
+        if let Some(c) = clusters.get_mut(best_cluster) {
+            c.members.push(i);
         }
     }   
 
+    for _ in 0..10000 {
+        // Pick the best center for each cluster
+        //println!("round {}", r);
+        for c in clusters.iter_mut() {
+            let mut scores: Vec<f32> = Vec::with_capacity(c.members.len());
+            // Simulate each member as the cluster center
+            for new_center in c.members.iter() {
+                let mut sum = 0f32;
+                for member in c.members.iter() {
+                    sum += distance(&matrix[*member], &matrix[*new_center]);
+                }
+                scores.push(sum);
+            }
+
+            let min = scores.iter().cloned().fold(1./0., f32::min);
+
+            // Update the cluster's center
+            if let Some(best) = scores.iter().position(|&x| x == min) {
+                c.center = best;
+            }
+            c.members.clear();
+        }   
+
+
+        let mut iter = matrix.iter().enumerate();
+
+        // iterate through each row in the matrix, and pick the best cluster membership
+        while let Some((i, current)) = iter.next() {
+            let mut scores: Vec<f32> = Vec::new();
+
+            // iterate through the cluster list, and find the euclidean distance
+            // between the current data point and each cluster's center
+            for c in clusters.iter() {
+                scores.push(distance(&current[..], &matrix[c.center]));
+            }
+
+            // pick the cluster-center that we are closest to
+            let min = scores.iter().cloned().fold(1./0., f32::min);
+            let best_cluster = scores.iter().position(|&x| x == min).unwrap();
+
+            // update the cluster list
+            if let Some(c) = clusters.get_mut(best_cluster) {
+                c.members.push(i);
+            }
+        } 
+
+        // Now we clear the membership list, and then pick new members for each cluster
+    }
+
+    // We now have the initial cluster centers and members picked
+    // Next, we need to try to optimize centers to pick the best values
+
+
+
     // mutex prevents threads from writing to stdout out-of-order
     let i = mutex.lock().unwrap();
-    println!("Scores w/ k={}", kn);
-    for (k, c) in centroids.iter().zip(cluster_scores.iter()) {
-        println!("{:?}: score {}", k, c.iter().cloned().sum::<f32>() / c.len() as f32);
+    println!("Scores w/ k={}", k);
+    for (q, c) in clusters.iter().enumerate() {
+        let sum: f32 = c.members.iter()
+                               .fold(0f32, |acc, &x| acc + distance(&matrix[x], &matrix[c.center]));
+        println!("{:?}: score {}", q, sum / c.members.iter().sum::<usize>() as f32);
     }
+
+   // println!("{:?}", membership);
 
     clusters
    
@@ -119,9 +170,9 @@ fn main() {
             }
         }).collect::<Vec<String>>();
 
-        if class.len() != 1 {
-            panic!("Too many string classes specified");
-        }
+        // if class.len() != 1 {
+        //     panic!("Too many string classes specified");
+        // }
 
         // draining iterator allows us to take ownership
         classes.push(class.drain(0..).next().unwrap());
@@ -140,7 +191,9 @@ fn main() {
     // stdout lock
     let l = Arc::new(Mutex::new(0));
 
-    // spawn a thread for each K-value
+   // kmeans(l, m, 3);
+
+    //spawn a thread for each K-value
     for K in 1..5 {
         let mat = m.clone();
         let lock = l.clone();
