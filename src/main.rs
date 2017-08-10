@@ -15,14 +15,13 @@ fn distance(x: &[f32], b: &[f32]) -> f32 {
     sums
 }
 
-fn matrix_to_cells(m: Vec<Vec<f32>>) -> Vec<Vec<Cell>> {
-    // let out: Vec<Vec<Cell>> = Vec::with_capacity(m.len());
-    // for row in m.iter() {
-    //     out.push(row.iter().map(|&x| Cell::Float(x)).collect());
-    // }
-    // out;
-
-    m.iter().map(|r| r.iter().map(|&x| Cell::Float(x)).collect()).collect()
+fn matrix_to_cells(m: &Vec<Vec<f32>>, s: &Vec<String>) -> Vec<Vec<Cell>> {
+    m.iter().zip(s.iter())
+            .map(|(i, j)| {
+                let mut l = i.iter().map(|&x| Cell::Float(x)).collect::<Vec<Cell>>();
+                l.push(Cell::String(j.clone())); 
+                l 
+            }).collect()
 }
 
 #[derive(Debug)]
@@ -135,6 +134,7 @@ fn kmeans(mutex: Arc<Mutex<i32>>, matrix: Arc<Vec<Vec<f32>>>, k: usize) -> (f32,
         score += sum;
         println!("{:?}: score {}", q, sum / c.members.iter().sum::<usize>() as f32);
     }
+    println!("Final score: {}", score);
 
     // generate a new matrix containing the cluster # appended to the end
     let mut results: Vec<Vec<f32>> = Vec::with_capacity(matrix.len());
@@ -147,12 +147,9 @@ fn kmeans(mutex: Arc<Mutex<i32>>, matrix: Arc<Vec<Vec<f32>>>, k: usize) -> (f32,
 }
 
 fn main() {
-    //let a = args().collect::<Vec<String>>();
-    let filename = "iris.txt"; //&a[1];
+    let filename = "iris.txt";
     let s = Spreadsheet::read(filename, '\t').unwrap();
-
     let mut enumerate = s.data.iter().enumerate();
-
     let mut matrix: Vec<Vec<f32>> = Vec::new();
     let mut classes: Vec<String> = Vec::new();
 
@@ -184,10 +181,6 @@ fn main() {
             }
         }).collect::<Vec<String>>();
 
-        // if class.len() != 1 {
-        //     panic!("Too many string classes specified");
-        // }
-
         // draining iterator allows us to take ownership
         classes.push(class.drain(0..).next().unwrap());
         matrix.push(floats);
@@ -197,32 +190,25 @@ fn main() {
     matrix.shrink_to_fit();
     classes.shrink_to_fit();
 
+    // Thread handles
     let mut handles: Vec<JoinHandle<_>> = Vec::new();
+    // stdout lock
+    let stdout = Arc::new(Mutex::new(0));
 
     // thread safe data structure for sharing the matrix
-    let m = Arc::new(matrix);
-    let c = Arc::new(classes);
-    // stdout lock
-    let l = Arc::new(Mutex::new(0));
-
-   // kmeans(l, m, 3);
-
-    //spawn a thread for each K-value
-
-    let results: Vec<Vec<Vec<f32>>> = Vec::new();
-    let result_lock = Arc::new(Mutex::new(results));
-    
+    let matrix = Arc::new(matrix);
+    // Mutable data to be stored results of kmean calculation
+    let results = Arc::new(Mutex::new(Vec::<Vec<Vec<f32>>>::new()));
     let scores = Arc::new(Mutex::new(Vec::<f32>::new()));
     
 
-    for K in 1..5 {
-        let mat = m.clone();
-        let lock = l.clone();
-        let r = result_lock.clone();
+    for K in 1..6 {
+        let mat = matrix.clone();
+        let lock = stdout.clone();
+        let r = results.clone();
         let s = scores.clone();
         handles.push(std::thread::spawn(move || {
             let (score, data) = kmeans(lock, mat, K);
-            //println!("{:?}", c);
             r.try_lock().unwrap().push(data);
             s.try_lock().unwrap().push(score);
         }));
@@ -237,26 +223,24 @@ fn main() {
         if let Ok(scores) = scores.try_lock() {
             let min: f32 = scores.iter().cloned().fold(1./0., f32::min);
             if let Some(winner) = scores.iter().position(|&x| x == min) {
-                if let Ok(matrix) = Arc::try_unwrap(result_lock) {
+                if let Ok(matrix) = Arc::try_unwrap(results) {
                     if let Ok(matrix) = matrix.try_lock() {
                         if let Some(best_matrix) = matrix.get(winner){
                             let output = Spreadsheet {
                                 headers: s.headers,
-                                data: matrix_to_cells(best_matrix.clone()),
+                                data: matrix_to_cells(best_matrix, &classes),
                                 rows: s.rows.clone(),
                                 cols: s.cols.clone() + 1,
                             };
 
                             output.write("output.tsv".into()).unwrap();
-                            println!("Winner was k={} with score={}", winner+1, min);
+                            println!("Winning score={}", min);
                         }
                     }
                 }
             } else {
                 println!("Error encountered while generating scores");
             }
-
-
         }
     }
 }
